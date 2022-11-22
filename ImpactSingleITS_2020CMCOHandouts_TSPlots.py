@@ -17,9 +17,9 @@ import os
 time_start = time.time()
 
 # 0 --- Main settings
-path_transactions = ''
-tel_config = 'test.conf'  # add own telegram bot channel config
-# Ceic.login('', '')
+path_transactions = 'D:/Users/ECSUAH/Desktop/Quant/'
+tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow # EcMetrics_Config_RMU
+# Ceic.login('suahjinglian@bnm.gov.my', 'J#D!H@MST#r1995')
 redownload_gmob = False  # large csv file
 run_charts = True  # slow
 
@@ -74,6 +74,7 @@ def multiEventTSplot(
         data,
         x_col,
         y_cols,
+        titles,
         event_col,
         main_title,
         y_title,
@@ -84,7 +85,7 @@ def multiEventTSplot(
     d = data.copy()  # deep copy
     maxr = maxrows
     maxc = maxcols
-    fig = make_subplots(rows=maxr, cols=maxc, subplot_titles=y_cols)
+    fig = make_subplots(rows=maxr, cols=maxc, subplot_titles=titles)
     nr = 1
     nc = 1
     for y in tqdm(y_cols):
@@ -227,7 +228,7 @@ df.loc[df.index == date(2020, 5, 15), 'handout_p2_appeal'] = 1
 for i in ['handout_p1_b40', 'handout_p1_m40', 'handout_p2', 'handout_p2_appeal']:
     df.loc[df[i].isna(), i] = 0  # vectorised fillna
 # Restrict to vicinity of 2Q 2020 CMCO period
-T_lb = date(2020, 3, 1)
+T_lb = date(2020, 3, 25)
 T_ub = date(2020, 5, 31)  # harmonise with ITS analysis
 df = df[((df.index >= T_lb) &
          (df.index <= T_ub))]
@@ -247,6 +248,12 @@ if run_charts:
                 'fpx', 'mydebit', 'jompay', 'atm',
                 'credebit_physical', 'credebit_online', 'credebit',
                 'mob_retl', 'mob_groc'],
+        titles=['Total',
+                'Cashless', 'Cash',
+                'Online', 'Physical',
+                'FPX', 'MyDebit', 'JomPAY', 'ATM Withdrawals',
+                'Physical Card', 'Online Card', 'Card',
+                'Retail & Recreation Mobility', 'Grocery and Pharmacy Mobility'],
         event_col=event_choice,
         maxrows=4,
         maxcols=4,
@@ -267,6 +274,12 @@ if run_charts:
                 'fpx_ln_d', 'mydebit_ln_d', 'jompay_ln_d', 'atm_ln_d',
                 'credebit_physical_ln_d', 'credebit_online_ln_d', 'credebit_ln_d',
                 'mob_retl_ln_d', 'mob_groc_ln_d'],
+        titles=['Total',
+                'Cashless', 'Cash',
+                'Online', 'Physical',
+                'FPX', 'MyDebit', 'JomPAY', 'ATM Withdrawals',
+                'Physical Card', 'Online Card', 'Card',
+                'Retail & Recreation Mobility', 'Grocery and Pharmacy Mobility'],
         event_col=event_choice,
         maxrows=4,
         maxcols=4,

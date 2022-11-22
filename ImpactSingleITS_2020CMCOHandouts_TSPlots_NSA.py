@@ -3,14 +3,16 @@ import numpy as np
 from datetime import date, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import statsmodels.tsa.api as smt
 import paneleventstudy as es
 from ceic_api_client.pyceic import Ceic
 import telegram_send
+import dataframe_image as dfi
+from tabulate import tabulate
 from tqdm import tqdm
 import time
 import glob
 import os
-import subprocess
 
 time_start = time.time()
 
@@ -19,6 +21,7 @@ path_transactions = 'D:/Users/ECSUAH/Desktop/Quant/'
 tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow # EcMetrics_Config_RMU
 # Ceic.login('suahjinglian@bnm.gov.my', 'J#D!H@MST#r1995')
 redownload_gmob = False  # large csv file
+run_charts = True  # slow
 
 # I --- Functions
 
@@ -71,6 +74,7 @@ def multiEventTSplot(
         data,
         x_col,
         y_cols,
+        titles,
         event_col,
         main_title,
         y_title,
@@ -81,7 +85,7 @@ def multiEventTSplot(
     d = data.copy()  # deep copy
     maxr = maxrows
     maxc = maxcols
-    fig = make_subplots(rows=maxr, cols=maxc, subplot_titles=y_cols)
+    fig = make_subplots(rows=maxr, cols=maxc, subplot_titles=titles)
     nr = 1
     nc = 1
     for y in tqdm(y_cols):
@@ -139,14 +143,13 @@ def multiEventTSplot(
 # Daily headline transactions
 list_transactions = glob.glob(path_transactions + 'transactions_headline_*.xlsx')  # all files in the folder
 latest_transactions = max(list_transactions, key=os.path.getctime)  # find the latest file
-df = pd.read_excel(latest_transactions, sheet_name='daily_sa')  # seasonally adjusted
+df = pd.read_excel(latest_transactions, sheet_name='daily_raw')  # NOT seasonally adjusted
 df = df.rename(columns={'Unnamed: 0': 'date'})  # blank excel column label
 df['date'] = df['date'].dt.date  # from datetime to date format
-df = df.drop(columns=['Unnamed: 13', 'Unnamed: 14'])
+# df = df.drop(columns=['Unnamed: 13', 'Unnamed: 14'])
 df = df.set_index('date')
 # Scale transactions data to reference time
 t_ref = date(2020, 1, 1)
-myr_ref = df[df.index == t_ref].iloc[0]  # Store MYR value during t_ref
 for i in list(df.columns):
     df[i] = 100 * (df[i] / df.loc[df.index == t_ref, i].reset_index(drop=True)[0])
 # Google mobility
@@ -186,14 +189,14 @@ if redownload_gmob:
     for i in list_mob:
         df_gmob[i] = df_gmob[i] + 100
     # Convert into 7DMA
-    df_gmob = df_gmob.reset_index(drop=True)
-    for i in list_mob:
-        df_gmob[i] = df_gmob[i].rolling(7, min_periods=7).mean().reset_index(drop=True)
+    # df_gmob = df_gmob.reset_index(drop=True)
+    # for i in list_mob:
+    #     df_gmob[i] = df_gmob[i].rolling(7, min_periods=7).mean().reset_index(drop=True)
     # save interim file
     df_gmob['date'] = df_gmob['date'].astype('str')
-    df_gmob.to_parquet('gmob_cleaned.parquet', index=False)
+    df_gmob.to_parquet('gmob_cleaned_NSA.parquet', index=False)
 # Read interim gmob file save in local directory
-df_gmob = pd.read_parquet('gmob_cleaned.parquet')
+df_gmob = pd.read_parquet('gmob_cleaned_NSA.parquet')
 df_gmob['date'] = pd.to_datetime(df_gmob['date']).dt.date
 # Merge
 df = df.merge(df_gmob, on='date', how='outer')
@@ -224,48 +227,69 @@ df.loc[df.index == date(2020, 5, 4), 'handout_p2'] = 1  # actual disbursement
 df.loc[df.index == date(2020, 5, 15), 'handout_p2_appeal'] = 1
 for i in ['handout_p1_b40', 'handout_p1_m40', 'handout_p2', 'handout_p2_appeal']:
     df.loc[df[i].isna(), i] = 0  # vectorised fillna
-# Settings
-event_choice = 'handout_p2'
-event_date = date(2020, 5, 4)
 # Restrict to vicinity of 2Q 2020 CMCO period
 T_lb = date(2020, 3, 25)
-T_ub = date(2020, 5, 31)  # RMCO phased relaxation
+T_ub = date(2020, 5, 31)  # harmonise with ITS analysis
 df = df[((df.index >= T_lb) &
          (df.index <= T_ub))]
-postevent_length = (T_ub - event_date).days
+# Settings
+event_choice = 'handout_p2'
 
 # III --- Time series plots
-
-# IV --- Setup data for analysis
-# Generate relative time column
-df = es.dropmissing(data=df, event=event_choice)  # the May handout coincided with some freedom of movement
-df['ct'] = np.arange(len(df))  # numeric calendar time
-df['reltime'] = df['ct'] - df.loc[df[event_choice] == 1, 'ct'].reset_index(drop=True)[0]
-
-# V.A --- Structural break test setup
-list_target_endog = ['total_ln_d']
-list_target_endog_level = ['total_ln']
-list_target_endog_myr = ['total']
-list_loglevels_endog = ['total_ln']  # ensure no overlaps
-list_logdiff_endog = ['total_ln_d']  # ensure no overlaps
-list_loglevels_exog = ['mob_retl_ln', 'mob_groc_ln']
-list_logdiff_exog = ['mob_retl_ln_d', 'mob_groc_ln_d']
-
-df.to_csv('interim.csv', index=False)  # feed into R
-
-# V.B --- Structural break test execution
-bp = subprocess.call('\"C:\\Program Files\\R\\R-4.1.2\\bin\\Rscript.exe\" structuralbreak_2020CMCOHandouts.R',
-                     shell=True)
-telsendimg(conf=tel_config,
-           path='Output/ImpactSingleITS_2020CMCOHandouts_StructuralBreak_Spending.png',
-           cap='Bai-Perron Breakpoints: Spending')
-telsendimg(conf=tel_config,
-           path='Output/ImpactSingleITS_2020CMCOHandouts_StructuralBreak_MobRetl.png',
-           cap='Bai-Perron Breakpoints: Mobility (Retail & Recreation)')
-telsendimg(conf=tel_config,
-           path='Output/ImpactSingleITS_2020CMCOHandouts_StructuralBreak_MobGroc.png',
-           cap='Bai-Perron Breakpoints: Mobility (Grocery & Pharmacy)')
-os.remove('interim.csv')
+if run_charts:
+    df_forchart = df.reset_index()
+    # Level
+    fig_level = multiEventTSplot(
+        data=df_forchart,
+        x_col='date',
+        y_cols=['total',
+                'cashless', 'cash',
+                'online', 'physical',
+                'fpx', 'mydebit', 'jompay', 'atm',
+                'credebit_physical', 'credebit_online', 'credebit',
+                'mob_retl', 'mob_groc'],
+        titles=['Total',
+                'Cashless', 'Cash',
+                'Online', 'Physical',
+                'FPX', 'MyDebit', 'JomPAY', 'ATM Withdrawals',
+                'Physical Card', 'Online Card', 'Card',
+                'Retail & Recreation Mobility', 'Grocery and Pharmacy Mobility'],
+        event_col=event_choice,
+        maxrows=4,
+        maxcols=4,
+        main_title='Daily Transactions and Mobility During the 2Q 2020 Cash Handouts',
+        y_title='100 = (1 Jan 2020; or Jan-Feb 2020) ',
+        output_name='Output/ImpactSingleITS_2020CMCOHandouts_TSPlots_NSA_Level'
+    )
+    telsendimg(conf=tel_config,
+               path='Output/ImpactSingleITS_2020CMCOHandouts_TSPlots_NSA_Level.png',
+               cap='Daily Transactions During the 2Q 2020 Cash Handouts')
+    # Log-difference
+    fig_logdiff = multiEventTSplot(
+        data=df_forchart,
+        x_col='date',
+        y_cols=['total_ln_d',
+                'cashless_ln_d', 'cash_ln_d',
+                'online_ln_d', 'physical_ln_d',
+                'fpx_ln_d', 'mydebit_ln_d', 'jompay_ln_d', 'atm_ln_d',
+                'credebit_physical_ln_d', 'credebit_online_ln_d', 'credebit_ln_d',
+                'mob_retl_ln_d', 'mob_groc_ln_d'],
+        titles=['Total',
+                'Cashless', 'Cash',
+                'Online', 'Physical',
+                'FPX', 'MyDebit', 'JomPAY', 'ATM Withdrawals',
+                'Physical Card', 'Online Card', 'Card',
+                'Retail & Recreation Mobility', 'Grocery and Pharmacy Mobility'],
+        event_col=event_choice,
+        maxrows=4,
+        maxcols=4,
+        main_title='Log Difference of Daily Transactions and Mobility During the 2Q 2020 Cash Handouts',
+        y_title='Growth / 100',
+        output_name='Output/ImpactSingleITS_2020CMCOHandouts_TSPlots_NSA_LogDiff'
+    )
+    telsendimg(conf=tel_config,
+               path='Output/ImpactSingleITS_2020CMCOHandouts_TSPlots_NSA_LogDiff.png',
+               cap='Log Difference of Daily Transactions During the 2Q 2020 Cash Handouts')
 
 # End
 print('\n----- Ran in ' + "{:.0f}".format(time.time() - time_start) + ' seconds -----')

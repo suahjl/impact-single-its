@@ -15,9 +15,9 @@ import subprocess
 time_start = time.time()
 
 # 0 --- Main settings
-path_transactions = ''
-tel_config = 'test.conf'  # add own telegram bot channel config
-# Ceic.login('', '')
+path_transactions = 'D:/Users/ECSUAH/Desktop/Quant/'
+tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow # EcMetrics_Config_RMU
+# Ceic.login('suahjinglian@bnm.gov.my', 'J#D!H@MST#r1995')
 redownload_gmob = False  # large csv file
 
 # I --- Functions

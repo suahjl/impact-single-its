@@ -6,7 +6,7 @@ import time
 time_start = time.time()
 
 # 0 --- Main settings
-tel_config = 'test.conf'  # add own telegram bot channel config
+tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow # EcMetrics_Config_RMU
 
 # I --- Functions
 
@@ -32,17 +32,23 @@ def telsendmsg(conf='', msg=''):
 
 # II --- Execute scripts
 import ImpactSingleITS_2020CMCOHandouts_TSPlots
+import ImpactSingleITS_2020CMCOHandouts_TSPlots_NSA
 import ImpactSingleITS_2020CMCOHandouts
+import ImpactSingleITS_2020CMCOHandouts_States
 import ImpactSingleITS_2020CMCOHandouts_StructuralBreak
 time.sleep(30)  # to prevent flooding
 
 import ImpactSingleITS_2020BSH3Handouts_TSPlots
+import ImpactSingleITS_2020BSH3Handouts_TSPlots_NSA
 import ImpactSingleITS_2020BSH3Handouts
+import ImpactSingleITS_2020BSH3Handouts_States
 import ImpactSingleITS_2020BSH3Handouts_StructuralBreak
 time.sleep(30)  # to prevent flooding
 
 import ImpactSingleITS_2021BPR3Handouts_TSPlots
+import ImpactSingleITS_2021BPR3Handouts_TSPlots_NSA
 import ImpactSingleITS_2021BPR3Handouts
+import ImpactSingleITS_2021BPR3Handouts_States
 import ImpactSingleITS_2021BPR3Handouts_StructuralBreak
 time.sleep(30)  # to prevent flooding
 

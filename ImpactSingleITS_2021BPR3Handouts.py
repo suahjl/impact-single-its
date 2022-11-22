@@ -19,8 +19,8 @@ time_start = time.time()
 
 # 0 --- Main settings
 path_transactions = ''
-tel_config = 'test.conf'  # add own telegram bot channel config
-# Ceic.login('', '')
+tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow # EcMetrics_Config_RMU
+# Ceic.login('suahjinglian@bnm.gov.my', 'J#D!H@MST#r1995')
 redownload_gmob = False  # large csv file
 run_prechecks = True  # spam
 show_ci = True  # VAR CIs diverge
@@ -249,6 +249,14 @@ df['reltime'] = df['ct'] - df.loc[df[event_choice] == 1, 'ct'].reset_index(drop=
 target_endog = ['total_ln_d']
 loglevels_endog = ['total_ln', 'mob_retgro_ln', 'mob_retl_ln', 'mob_groc_ln']
 logdiff_endog = ['total_ln_d', 'mob_retgro_ln_d', 'mob_retl_ln_d', 'mob_groc_ln_d']
+dict_raw_to_nice = {'total_ln': 'ln(Total)',
+                    'mob_retgro_ln': 'ln(Retail & Grocery Mobility)',
+                    'mob_retl_ln': 'ln(Retail Mobility)',
+                    'mob_groc_ln': 'ln(Grocery Mobility)',
+                    'total_ln_d': '\u0394ln(Total)',
+                    'mob_retgro_ln_d': '\u0394ln(Retail & Grocery Mobility)',
+                    'mob_retl_ln_d': '\u0394ln(Retail Mobility)',
+                    'mob_groc_ln_d': '\u0394ln(Grocery Mobility)'}
 preevent_only = True  # keep only pre-event period
 if preevent_only:
     d = df[df['reltime'] < 0]
@@ -289,6 +297,7 @@ if run_prechecks:
     tab_urtest = tabulate(urtest_consol, showindex=False, headers='keys', tablefmt='github')
     print(tab_urtest)
     urtest_consol = urtest_consol.reset_index(drop=True)
+    urtest_consol['variable'] = urtest_consol['variable'].replace(dict_raw_to_nice)
     dfi.export(urtest_consol, 'Output/ImpactSingleITS_2021BPR3Handouts_URoot.png')
     telsendimg(conf=tel_config,
                path='Output/ImpactSingleITS_2021BPR3Handouts_URoot.png',
@@ -312,18 +321,33 @@ def single_its_arx(data=df,
                    target_endog_level=list_target_endog_level,
                    target_endog_myr=list_target_endog_myr,
                    handout_myr=quantum_handout_myr,
+                   exog_quad=False,
+                   exog_cubic=False,
                    alpha='c'):
     # Preliminaries
-    d = data.copy()
+    d_full = data.copy()
+    if (exog_quad is True) & (exog_cubic is True):
+        raise NotImplementedError('Make up your mind, only one of exog_quad and exog_cubic can be True')
+    if exog_quad is True:
+        for i in logdiff_exog:
+            d_full[i + '_quad'] = d_full[i] ** 2
+        logdiff_exog = logdiff_exog + [i + '_quad' for i in logdiff_exog]
+    elif exog_cubic is True:
+        for i in logdiff_exog:
+            d_full[i + '_quad'] = d_full[i] ** 2
+            d_full[i + '_cubic'] = d_full[i] ** 3
+        exog_quad_list = [i + '_quad' for i in logdiff_exog]
+        exog_cubic_list = [i + '_cubic' for i in logdiff_exog]
+        logdiff_exog = logdiff_exog + exog_quad_list + exog_cubic_list
 
     # Trim dataframe copy
-    d = df[df['reltime'] < 0]  # only keep PRE-event period
-    d_post = df[df['reltime'] >= 0]  # only keep POST-event period
-    d_full = df.copy()  # keep both PRE- and POST-event period
+    d = d_full[d_full['reltime'] < 0]  # only keep PRE-event period
+    d_post = d_full[d_full['reltime'] >= 0]  # only keep POST-event period
 
     # Estimation
-    ar_order = ar_select_order(d[logdiff_endog], maxlag=7, trend=alpha, ic='hqic').ar_lags[0]
-    # ar_order = 7
+    ar_order = ar_select_order(d[logdiff_endog], maxlag=7, trend=alpha, ic='hqic').ar_lags
+    if ar_order is None: ar_order = 1  # fail-safe, defaults to AR(1)-X if lag selection is indifferent
+    elif ar_order is not None: ar_order = ar_order[0]
     est_arx = smt.AutoReg(endog=d[logdiff_endog],
                           exog=d[logdiff_exog],
                           trend=alpha,
@@ -476,7 +500,9 @@ def single_its_arx(data=df,
 
 
 # Execute
-df_fcast, df_fcast_myr, ar_order, df_pred = single_its_arx(data=df)
+df_fcast, df_fcast_myr, ar_order, df_pred = single_its_arx(data=df, exog_quad=False, exog_cubic=False, alpha='c')
+df_fcast_quad, df_fcast_myr_quad, ar_order_quad, df_pred_quad = single_its_arx(data=df, exog_quad=True, exog_cubic=False, alpha='n')
+df_fcast_cubic, df_fcast_myr_cubic, ar_order_cubic, df_pred_cubic = single_its_arx(data=df, exog_quad=False, exog_cubic=True, alpha='n')
 
 # Plot impact estimates
 # Keep only post-event period for impact est (no counterfactual for pre-period)
@@ -758,7 +784,6 @@ fig_comp_withpred.update_layout(
     height=768,
     width=1366
 )
-
 # Export chart
 fig_comp.write_html('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPlot.html')
 fig_comp.write_image('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPlot.png')
@@ -774,7 +799,330 @@ telsendimg(conf=tel_config,
            cap='Single Entity Interrupted Time Series: ' +
                'Observed, Counterfactual, and Pre-Event Predicted Daily Transactions (with 95% CIs)')
 
-# Describe the analysis
+
+# ------- Sensitivity charts
+
+# Daily impact
+# Keep only post-event period for impact est (no counterfactual for pre-period)
+df_fcast_quad_post = df_fcast_quad[df_fcast_quad.index >= 0]
+df_fcast_cubic_post = df_fcast_cubic[df_fcast_cubic.index >= 0]
+fig_impact_sens = go.Figure()
+# Add point estimate
+fig_impact_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_post.index.astype('str'),
+        y=df_fcast_post['pt_impact'],
+        name='Linear',
+        mode='lines',
+        line=dict(color='black', width=3)
+    )
+)
+fig_impact_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_quad_post.index.astype('str'),
+        y=df_fcast_quad_post['pt_impact'],
+        name='Quadratic',
+        mode='lines',
+        line=dict(color='crimson', width=3)
+    )
+)
+fig_impact_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_cubic_post.index.astype('str'),
+        y=df_fcast_cubic_post['pt_impact'],
+        name='Cubic',
+        mode='lines',
+        line=dict(color='darkblue', width=3)
+    )
+)
+# Add reference
+df_fcast_quad_post['ref'] = 0
+fig_impact_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_quad_post.index.astype('str'),
+        y=df_fcast_quad_post['ref'],
+        name='Reference (Y=0)',
+        mode='lines',
+        line=dict(color='darkgray', width=1.5)
+    )
+)
+del df_fcast_quad_post['ref']
+# Layout
+fig_impact_sens.update_layout(
+    title='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+          'Impact of CMCO Cash Handouts on Daily Transactions',
+    yaxis_title='% / 100 of Counterfactual',
+    plot_bgcolor='white',
+    hovermode='x',
+    font=dict(color='black', size=12),
+    showlegend=False,
+    height=768,
+    width=1366
+)
+# Export chart
+fig_impact_sens.write_html('Output/ImpactSingleITS_2021BPR3Handouts_ImpactPlot_Sensitivity.html')
+fig_impact_sens.write_image('Output/ImpactSingleITS_2021BPR3Handouts_ImpactPlot_Sensitivity.png')
+telsendimg(conf=tel_config,
+           path='Output/ImpactSingleITS_2021BPR3Handouts_ImpactPlot_Sensitivity.png',
+           cap='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+               'Impact of CMCO Cash Handouts on Daily Transactions')
+
+# Cumulative impact
+# Keep only post-event period for impact est (no counterfactual for pre-period)
+df_fcast_myr_quad_post = df_fcast_myr_quad[df_fcast_myr_quad.index >= 0]
+df_fcast_myr_cubic_post = df_fcast_myr_cubic[df_fcast_myr_cubic.index >= 0]
+fig_impact_cumul_myr_sens = go.Figure()
+# Add point estimate
+fig_impact_cumul_myr_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_myr_post.index.astype('str'),
+        y=df_fcast_myr_post['pt_cumulimpact'],
+        name='Linear',
+        mode='lines',
+        line=dict(color='black', width=3)
+    )
+)
+fig_impact_cumul_myr_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_myr_quad_post.index.astype('str'),
+        y=df_fcast_myr_quad_post['pt_cumulimpact'],
+        name='Quadratic',
+        mode='lines',
+        line=dict(color='crimson', width=3)
+    )
+)
+fig_impact_cumul_myr_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_myr_cubic_post.index.astype('str'),
+        y=df_fcast_myr_cubic_post['pt_cumulimpact'],
+        name='Cubic',
+        mode='lines',
+        line=dict(color='darkblue', width=3)
+    )
+)
+# Add reference
+df_fcast_myr_post['ref'] = 0
+fig_impact_cumul_myr_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_myr_post.index.astype('str'),
+        y=df_fcast_myr_post['ref'],
+        name='Reference (Y=0)',
+        mode='lines',
+        line=dict(color='darkgray', width=1.5)
+    )
+)
+del df_fcast_myr_post['ref']
+# Layout
+fig_impact_cumul_myr_sens.update_layout(
+    title='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+          'Cumulative MYR Impact of CMCO Cash Handouts on Daily Transactions',
+    yaxis_title='MYR',
+    plot_bgcolor='white',
+    hovermode='x',
+    font=dict(color='black', size=12),
+    showlegend=False,
+    height=768,
+    width=1366
+)
+# Export chart
+fig_impact_cumul_myr_sens.write_html('Output/ImpactSingleITS_2021BPR3Handouts_CumulMYRImpactPlot_Sensitivity.html')
+fig_impact_cumul_myr_sens.write_image('Output/ImpactSingleITS_2021BPR3Handouts_CumulMYRImpactPlot_Sensitivity.png')
+telsendimg(conf=tel_config,
+           path='Output/ImpactSingleITS_2021BPR3Handouts_CumulMYRImpactPlot_Sensitivity.png',
+           cap='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+               'Cumulative MYR Impact of CMCO Cash Handouts on Daily Transactions')
+
+# Multiplier
+# Keep only post-event period for impact est (no counterfactual for pre-period)
+# df_fcast_myr_post = df_fcast_myr[df_fcast_myr.index >= 0]
+df_fcast_myr_end_quad = df_fcast_myr_quad[df_fcast_myr_quad.index == df_fcast_myr_quad.index.max()].reset_index(drop=True)
+df_fcast_myr_end_quad = df_fcast_myr_end_quad.round(3)
+df_fcast_myr_end_cubic = df_fcast_myr_cubic[df_fcast_myr_cubic.index == df_fcast_myr_cubic.index.max()].reset_index(drop=True)
+df_fcast_myr_end_cubic = df_fcast_myr_end_cubic.round(3)
+fig_multiplier_sens = go.Figure()
+# Add point estimate
+fig_multiplier_sens.add_trace(
+    go.Bar(
+        y=df_fcast_myr_end['pt_multiplier'],
+        name='Linear',
+        error_y=dict(
+            type='constant',
+            value=(df_fcast_myr_end['ub_multiplier'] - df_fcast_myr_end['pt_multiplier']).reset_index(drop=True)[0],
+            valueminus=(df_fcast_myr_end['pt_multiplier'] - df_fcast_myr_end['lb_multiplier']).reset_index(drop=True)[0]
+        ),
+        marker=dict(color='lightgray'),
+        width=0.3,
+        text=df_fcast_myr_end['pt_multiplier'],
+        textposition='outside'
+    )
+)
+fig_multiplier_sens.add_trace(
+    go.Bar(
+        y=df_fcast_myr_end_quad['pt_multiplier'],
+        name='Quadratic',
+        error_y=dict(
+            type='constant',
+            value=(df_fcast_myr_end_quad['ub_multiplier'] - df_fcast_myr_end_quad['pt_multiplier']).reset_index(drop=True)[0],
+            valueminus=(df_fcast_myr_end_quad['pt_multiplier'] - df_fcast_myr_end_quad['lb_multiplier']).reset_index(drop=True)[0]
+        ),
+        marker=dict(color='lightcoral'),
+        width=0.3,
+        text=df_fcast_myr_end_quad['pt_multiplier'],
+        textposition='outside'
+    )
+)
+fig_multiplier_sens.add_trace(
+    go.Bar(
+        y=df_fcast_myr_end_cubic['pt_multiplier'],
+        name='Cubic',
+        error_y=dict(
+            type='constant',
+            value=(df_fcast_myr_end_cubic['ub_multiplier'] - df_fcast_myr_end_cubic['pt_multiplier']).reset_index(drop=True)[0],
+            valueminus=(df_fcast_myr_end_cubic['pt_multiplier'] - df_fcast_myr_end_cubic['lb_multiplier']).reset_index(drop=True)[0]
+        ),
+        marker=dict(color='lightblue'),
+        width=0.3,
+        text=df_fcast_myr_end_cubic['pt_multiplier'],
+        textposition='outside'
+    )
+)
+# Layout
+# fig_multiplier.update_yaxes(range=[0, 0.8])
+fig_multiplier_sens.update_layout(
+    title='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+          'Spending Multiplier of CMCO Cash Handouts on Daily Transactions (Cumulative Impact / Total Handouts)',
+    yaxis_title='Spending Multiplier',
+    plot_bgcolor='white',
+    hovermode='x',
+    font=dict(color='black', size=12),
+    showlegend=False,
+    uniformtext=dict(mode='show', minsize=22),
+    height=768,
+    width=1366
+)
+# Export chart
+fig_multiplier_sens.write_html('Output/ImpactSingleITS_2021BPR3Handouts_MultiplierPlot_Sensitivity.html')
+fig_multiplier_sens.write_image('Output/ImpactSingleITS_2021BPR3Handouts_MultiplierPlot_Sensitivity.png')
+telsendimg(conf=tel_config,
+           path='Output/ImpactSingleITS_2021BPR3Handouts_MultiplierPlot_Sensitivity.png',
+           cap='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+               'Spending Multiplier of CMCO Cash Handouts on Daily Transactions (Cumulative Impact / Total Handouts)')
+
+# Actual & counterfactual
+fig_comp_sens = go.Figure()
+# Add point estimate
+fig_comp_sens.add_trace(
+    go.Scatter(
+        x=df_fcast.index.astype('str'),
+        y=df_fcast[list_target_endog_level[0]],
+        name='Observed',
+        mode='lines',
+        line=dict(color='black', width=2)
+    )
+)
+# Add counterfactual point estimate
+fig_comp_sens.add_trace(
+    go.Scatter(
+        x=df_fcast.index.astype('str'),
+        y=df_fcast['ptcfact_' + list_target_endog_level[0]],
+        name='Counterfactual (Linear)',
+        mode='lines',
+        line=dict(color='darkgray', width=2, dash='dash')
+    )
+)
+fig_comp_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_quad.index.astype('str'),
+        y=df_fcast_quad['ptcfact_' + list_target_endog_level[0]],
+        name='Counterfactual (Quadratic)',
+        mode='lines',
+        line=dict(color='crimson', width=2, dash='dash')
+    )
+)
+fig_comp_sens.add_trace(
+    go.Scatter(
+        x=df_fcast_cubic.index.astype('str'),
+        y=df_fcast_cubic['ptcfact_' + list_target_endog_level[0]],
+        name='Counterfactual (Cubic)',
+        mode='lines',
+        line=dict(color='darkblue', width=2, dash='dash')
+    )
+)
+# Layout
+fig_comp_sens.update_layout(
+    title='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+          'Observed and Counterfactual Daily Transactions',
+    yaxis_title='Natural Logarithm; ln(100) = 4.605 = ' + str(t_ref) ,
+    plot_bgcolor='white',
+    hovermode='x',
+    font=dict(color='black', size=12),
+    showlegend=False,
+    height=768,
+    width=1366
+)
+
+# Plot observed + counterfactual + in-sample prediction series
+fig_comp_withpred_sens = go.Figure(fig_comp_sens)
+# Add pre-event prediction point estimate
+fig_comp_withpred_sens.add_trace(
+    go.Scatter(
+        x=df_pred.index.astype('str'),
+        y=df_pred['ptlvlpred_' + list_target_endog_level[0]],
+        name='Pre-Event Prediction (Point Est)',
+        mode='lines',
+        line=dict(color='gray', width=1.5, dash='dash')
+    )
+)
+# Add pre-event prediction point estimate
+fig_comp_withpred_sens.add_trace(
+    go.Scatter(
+        x=df_pred_quad.index.astype('str'),
+        y=df_pred_quad['ptlvlpred_' + list_target_endog_level[0]],
+        name='Pre-Event Prediction (Point Est)',
+        mode='lines',
+        line=dict(color='coral', width=1.5, dash='dash')
+    )
+)
+# Add pre-event prediction point estimate
+fig_comp_withpred_sens.add_trace(
+    go.Scatter(
+        x=df_pred_cubic.index.astype('str'),
+        y=df_pred_cubic['ptlvlpred_' + list_target_endog_level[0]],
+        name='Pre-Event Prediction (Point Est)',
+        mode='lines',
+        line=dict(color='lightblue', width=1.5, dash='dash')
+    )
+)
+# Layout
+fig_comp_withpred_sens.update_layout(
+    title='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+          'Observed, Counterfactual, and Pre-Event Predicted Daily Transactions',
+    yaxis_title='Natural Logarithm; ln(100) = 4.605 = ' + str(t_ref) ,
+    plot_bgcolor='white',
+    hovermode='x',
+    font=dict(color='black', size=12),
+    showlegend=False,
+    height=768,
+    width=1366
+)
+# Export charts
+fig_comp_sens.write_html('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPlot_Sensitivity.html')
+fig_comp_sens.write_image('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPlot_Sensitivity.png')
+telsendimg(conf=tel_config,
+           path='Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPlot_Sensitivity.png',
+           cap='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+               'Observed and Counterfactual Daily Transactions (with 95% CIs)')
+
+fig_comp_withpred_sens.write_html('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPredPlot_Sensitivity.html')
+fig_comp_withpred_sens.write_image('Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPredPlot_Sensitivity.png')
+telsendimg(conf=tel_config,
+           path='Output/ImpactSingleITS_2021BPR3Handouts_ObsCFactPredPlot_Sensitivity.png',
+           cap='(Sensitivity Check) Single Entity Interrupted Time Series: ' +
+               'Observed, Counterfactual, and Pre-Event Predicted Daily Transactions')
+
+
+# ------------ Messages on lag selection
+# Describe the analysis (Main)
 text_mod = 'Counterfactual is estimated with AR-X(' + str(ar_order) + \
            ') using log-difference transformation; lag order was selected using HQIC'
 text_target = '\n\nTarget variable: ' + list_target_endog_level[0]
@@ -782,6 +1130,24 @@ text_exog = '\nExogenous variables: ' + ', '.join(list_loglevels_exog)
 full_text = text_mod + text_target + text_exog
 telsendmsg(conf=tel_config,
            msg=full_text)
+
+# Describe the analysis (Quadratic)
+text_mod_quad = '(Quadratic) Counterfactual is estimated with AR-X(' + str(ar_order_quad) + \
+           ') using log-difference transformation; lag order was selected using HQIC'
+text_target_quad = '\n\nTarget variable: ' + list_target_endog_level[0]
+text_exog_quad = '\nExogenous variables: ' + ', '.join(list_loglevels_exog)
+full_text_quad = text_mod_quad + text_target_quad + text_exog_quad
+telsendmsg(conf=tel_config,
+           msg=full_text_quad)
+
+# Describe the analysis (Cubic)
+text_mod_cubic = '(Cubic) Counterfactual is estimated with AR-X(' + str(ar_order_cubic) + \
+           ') using log-difference transformation; lag order was selected using HQIC'
+text_target_cubic = '\n\nTarget variable: ' + list_target_endog_level[0]
+text_exog_cubic = '\nExogenous variables: ' + ', '.join(list_loglevels_exog)
+full_text_cubic = text_mod_cubic + text_target_cubic + text_exog_cubic
+telsendmsg(conf=tel_config,
+           msg=full_text_cubic)
 
 # End
 print('\n----- Ran in ' + "{:.0f}".format(time.time() - time_start) + ' seconds -----')

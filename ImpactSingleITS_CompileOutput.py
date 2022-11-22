@@ -8,7 +8,7 @@ import os
 time_start = time.time()
 
 # 0 --- Main settings
-tel_config = 'test.conf'  # add own telegram bot channel config
+tel_config = 'EcMetrics_Config_GeneralFlow.conf'  # EcMetrics_Config_GeneralFlow EcMetrics_Config_RMU
 
 # I --- Functions
 
